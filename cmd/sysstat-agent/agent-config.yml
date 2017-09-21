@@ -1,0 +1,13 @@
+---
+carbon_click_house_address: 10.155.92.218:2005
+disk_device_names:
+  - sda
+  - sdb
+  - sdc
+network_device_names:
+  - br0
+  - enp0s25
+server_id: sv01
+interval: 10s
+log_filename: /tmp/sysstat-agent.log
+enable_debug_log: true

@@ -88,6 +88,10 @@ func New(config *Config) (*Agent, error) {
 		diskStats:      diskStats,
 		netStats:       netStats,
 	}
+	a.allocMetrics()
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "allocated metrics").Int("metricCount", len(a.payload.Metrics)).Int("diskDevCount", len(a.config.DiskDeviceNames)).Int("networkDevCount", len(a.config.NetworkDeviceNames)).Log()
+	}
 	return a, nil
 }
 
@@ -218,22 +222,22 @@ func (a *Agent) updateMetrics(t time.Time) {
 	a.updateMetric(&i, ts, float64(a.memStat.SwapCached))
 	a.updateMetric(&i, ts, float64(a.memStat.SwapTotal))
 	a.updateMetric(&i, ts, float64(a.memStat.SwapFree))
-	for i := range a.diskStats {
-		a.updateMetric(&i, ts, a.diskStats[i].ReadCountPerSec)
-		a.updateMetric(&i, ts, a.diskStats[i].ReadBytesPerSec)
-		a.updateMetric(&i, ts, a.diskStats[i].WrittenCountPerSec)
-		a.updateMetric(&i, ts, a.diskStats[i].WrittenBytesPerSec)
+	for j := range a.diskStats {
+		a.updateMetric(&i, ts, a.diskStats[j].ReadCountPerSec)
+		a.updateMetric(&i, ts, a.diskStats[j].ReadBytesPerSec)
+		a.updateMetric(&i, ts, a.diskStats[j].WrittenCountPerSec)
+		a.updateMetric(&i, ts, a.diskStats[j].WrittenBytesPerSec)
 	}
-	for i := range a.netStats {
-		a.updateMetric(&i, ts, a.netStats[i].RecvBytesPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].RecvPacketsPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].RecvErrsPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].RecvDropsPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].TransBytesPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].TransPacketsPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].TransErrsPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].TransDropsPerSec)
-		a.updateMetric(&i, ts, a.netStats[i].TransCollsPerSec)
+	for j := range a.netStats {
+		a.updateMetric(&i, ts, a.netStats[j].RecvBytesPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].RecvPacketsPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].RecvErrsPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].RecvDropsPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].TransBytesPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].TransPacketsPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].TransErrsPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].TransDropsPerSec)
+		a.updateMetric(&i, ts, a.netStats[j].TransCollsPerSec)
 	}
 	a.updateMetric(&i, ts, a.loadAvg.Load1)
 	a.updateMetric(&i, ts, a.loadAvg.Load5)

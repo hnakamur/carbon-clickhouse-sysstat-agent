@@ -26,7 +26,7 @@ func main() {
 		log.Fatalf("failed to read config file; %v", err)
 	}
 
-	logFile, err := os.OpenFile(config.LogFilename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0x600)
+	logFile, err := os.OpenFile(config.LogFilename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		log.Fatalf("failed to create log file; %v", err)
 	}
