@@ -31,7 +31,6 @@
 //   sysstat.${serverID}.loadavg.load5
 //   sysstat.${serverID}.loadavg.load15
 //   sysstat.${serverID}.uptime.uptime
-//   sysstat.${serverID}.agent.metric_count
 //   sysstat.${serverID}.agent.collect_time
 //   sysstat.${serverID}.agent.send_time
 //   sysstat.${serverID}.agent.memory.vss

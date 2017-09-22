@@ -40,6 +40,11 @@ type Agent struct {
 
 	sysMetrics        *Metrics
 	sysMetricsUpdater *MetricsUpdater
+
+	metricsCollectTime  time.Duration
+	metricsSendTime     time.Duration
+	agentMetrics        *Metrics
+	agentMetricsUpdater *MetricsUpdater
 }
 
 // New creates and returns an agent.
@@ -87,6 +92,7 @@ func New(config *Config) (*Agent, error) {
 		netStats:       netStats,
 	}
 	a.initSysMetrics()
+	a.initAgentMetrics()
 	return a, nil
 }
 
@@ -109,19 +115,34 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) readAndSendStats(ctx context.Context, t time.Time) error {
+	start := time.Now()
 	err := a.readStats()
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to read sys stats; %v", err)
 		})
 	}
-	a.updateMetrics(t)
+	a.metricsCollectTime = time.Since(start)
+
+	a.updateSysMetrics(t)
+
+	start = time.Now()
 	err = a.sysMetrics.Send(ctx, a.config.CarbonClickHouseAddress)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to send sys stats; %v", err)
 		})
 	}
+	a.metricsSendTime = time.Since(start)
+
+	a.updateAgentMetrics(t)
+	err = a.agentMetrics.Send(ctx, a.config.CarbonClickHouseAddress)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to send agent stats; %v", err)
+		})
+	}
+
 	return nil
 }
 
@@ -204,7 +225,7 @@ func (a *Agent) initSysMetrics() {
 	a.sysMetricsUpdater = a.sysMetrics.Updater()
 }
 
-func (a *Agent) updateMetrics(t time.Time) {
+func (a *Agent) updateSysMetrics(t time.Time) {
 	ts := uint32(t.Unix())
 	a.sysMetricsUpdater.Reset()
 	a.sysMetricsUpdater.UpdateNextMetric(ts, a.cpuStat.UserPercent)
@@ -240,4 +261,19 @@ func (a *Agent) updateMetrics(t time.Time) {
 	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load5)
 	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load15)
 	a.sysMetricsUpdater.UpdateNextMetric(ts, a.uptime.Uptime)
+}
+
+func (a *Agent) initAgentMetrics() {
+	var names []string
+	names = append(names, fmt.Sprintf("sysstat.%s.agent.collect_time", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.agent.send_time", a.config.ServerID))
+	a.agentMetrics = NewMetrics(names)
+	a.agentMetricsUpdater = a.agentMetrics.Updater()
+}
+
+func (a *Agent) updateAgentMetrics(t time.Time) {
+	ts := uint32(t.Unix())
+	a.agentMetricsUpdater.Reset()
+	a.agentMetricsUpdater.UpdateNextMetric(ts, a.metricsCollectTime.Seconds())
+	a.agentMetricsUpdater.UpdateNextMetric(ts, a.metricsSendTime.Seconds())
 }
