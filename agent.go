@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/grpc"
-
-	pb "github.com/hnakamur/carbon-clickhouse-sysstat-agent/carbon"
 	"github.com/hnakamur/ltsvlog"
 	"github.com/hnakamur/sysstat"
 )
@@ -41,7 +38,8 @@ type Agent struct {
 	loadAvg   sysstat.LoadAvg
 	uptime    sysstat.Uptime
 
-	payload pb.Payload
+	sysMetrics        *Metrics
+	sysMetricsUpdater *MetricsUpdater
 }
 
 // New creates and returns an agent.
@@ -88,10 +86,7 @@ func New(config *Config) (*Agent, error) {
 		diskStats:      diskStats,
 		netStats:       netStats,
 	}
-	a.allocMetrics()
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "allocated metrics").Int("metricCount", len(a.payload.Metrics)).Int("diskDevCount", len(a.config.DiskDeviceNames)).Int("networkDevCount", len(a.config.NetworkDeviceNames)).Log()
-	}
+	a.initSysMetrics()
 	return a, nil
 }
 
@@ -117,10 +112,17 @@ func (a *Agent) readAndSendStats(ctx context.Context, t time.Time) error {
 	err := a.readStats()
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to read stats; %v", err)
+			return fmt.Errorf("failed to read sys stats; %v", err)
 		})
 	}
-	return a.sendStats(ctx, t)
+	a.updateMetrics(t)
+	err = a.sysMetrics.Send(ctx, a.config.CarbonClickHouseAddress)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to send sys stats; %v", err)
+		})
+	}
+	return nil
 }
 
 func (a *Agent) readStats() error {
@@ -163,112 +165,79 @@ func (a *Agent) readStats() error {
 	return nil
 }
 
-func (a *Agent) allocMetrics() {
-	a.allocMetric(fmt.Sprintf("sysstat.%s.cpu.user", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.cpu.nice", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.cpu.sys", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.cpu.iowait", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.total", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.free", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.avail", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.buffers", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.cached", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.swap_cached", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.swap_total", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.mem.swap_free", a.config.ServerID))
+func (a *Agent) initSysMetrics() {
+	var names []string
+	names = append(names, fmt.Sprintf("sysstat.%s.cpu.user", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.cpu.nice", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.cpu.sys", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.cpu.iowait", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.total", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.free", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.avail", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.buffers", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.cached", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.swap_cached", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.swap_total", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.mem.swap_free", a.config.ServerID))
 	for _, devName := range a.config.DiskDeviceNames {
-		a.allocMetric(fmt.Sprintf("sysstat.%s.disk.%s.read_count", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.disk.%s.read_bytes", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.disk.%s.written_count", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.disk.%s.written_bytes", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.disk.%s.read_count", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.disk.%s.read_bytes", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.disk.%s.written_count", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.disk.%s.written_bytes", a.config.ServerID, devName))
 	}
 	for _, devName := range a.config.NetworkDeviceNames {
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.recv_bytes", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.recv_packets", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.recv_errs", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.recv_drops", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.trans_bytes", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.trans_packets", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.trans_errs", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.trans_drops", a.config.ServerID, devName))
-		a.allocMetric(fmt.Sprintf("sysstat.%s.network.%s.trans_colls", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.recv_bytes", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.recv_packets", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.recv_errs", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.recv_drops", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_bytes", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_packets", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_errs", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_drops", a.config.ServerID, devName))
+		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_colls", a.config.ServerID, devName))
 	}
-	a.allocMetric(fmt.Sprintf("sysstat.%s.loadavg.load1", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.loadavg.load5", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.loadavg.load15", a.config.ServerID))
-	a.allocMetric(fmt.Sprintf("sysstat.%s.uptime.uptime", a.config.ServerID))
-}
-
-func (a *Agent) allocMetric(metricName string) {
-	metric := &pb.Metric{
-		Metric: metricName,
-		Points: []*pb.Point{new(pb.Point)},
-	}
-	a.payload.Metrics = append(a.payload.Metrics, metric)
+	names = append(names, fmt.Sprintf("sysstat.%s.loadavg.load1", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.loadavg.load5", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.loadavg.load15", a.config.ServerID))
+	names = append(names, fmt.Sprintf("sysstat.%s.uptime.uptime", a.config.ServerID))
+	a.sysMetrics = NewMetrics(names)
+	a.sysMetricsUpdater = a.sysMetrics.Updater()
 }
 
 func (a *Agent) updateMetrics(t time.Time) {
 	ts := uint32(t.Unix())
-	i := 0
-	a.updateMetric(&i, ts, a.cpuStat.UserPercent)
-	a.updateMetric(&i, ts, a.cpuStat.NicePercent)
-	a.updateMetric(&i, ts, a.cpuStat.SysPercent)
-	a.updateMetric(&i, ts, a.cpuStat.IOWaitPercent)
-	a.updateMetric(&i, ts, float64(a.memStat.MemTotal))
-	a.updateMetric(&i, ts, float64(a.memStat.MemFree))
-	a.updateMetric(&i, ts, float64(a.memStat.MemAvailable))
-	a.updateMetric(&i, ts, float64(a.memStat.Buffers))
-	a.updateMetric(&i, ts, float64(a.memStat.Cached))
-	a.updateMetric(&i, ts, float64(a.memStat.SwapCached))
-	a.updateMetric(&i, ts, float64(a.memStat.SwapTotal))
-	a.updateMetric(&i, ts, float64(a.memStat.SwapFree))
+	a.sysMetricsUpdater.Reset()
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.cpuStat.UserPercent)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.cpuStat.NicePercent)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.cpuStat.SysPercent)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.cpuStat.IOWaitPercent)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.MemTotal))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.MemFree))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.MemAvailable))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.Buffers))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.Cached))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.SwapCached))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.SwapTotal))
+	a.sysMetricsUpdater.UpdateNextMetric(ts, float64(a.memStat.SwapFree))
 	for j := range a.diskStats {
-		a.updateMetric(&i, ts, a.diskStats[j].ReadCountPerSec)
-		a.updateMetric(&i, ts, a.diskStats[j].ReadBytesPerSec)
-		a.updateMetric(&i, ts, a.diskStats[j].WrittenCountPerSec)
-		a.updateMetric(&i, ts, a.diskStats[j].WrittenBytesPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.diskStats[j].ReadCountPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.diskStats[j].ReadBytesPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.diskStats[j].WrittenCountPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.diskStats[j].WrittenBytesPerSec)
 	}
 	for j := range a.netStats {
-		a.updateMetric(&i, ts, a.netStats[j].RecvBytesPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].RecvPacketsPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].RecvErrsPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].RecvDropsPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].TransBytesPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].TransPacketsPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].TransErrsPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].TransDropsPerSec)
-		a.updateMetric(&i, ts, a.netStats[j].TransCollsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].RecvBytesPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].RecvPacketsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].RecvErrsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].RecvDropsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransBytesPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransPacketsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransErrsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransDropsPerSec)
+		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransCollsPerSec)
 	}
-	a.updateMetric(&i, ts, a.loadAvg.Load1)
-	a.updateMetric(&i, ts, a.loadAvg.Load5)
-	a.updateMetric(&i, ts, a.loadAvg.Load15)
-	a.updateMetric(&i, ts, a.uptime.Uptime)
-}
-
-func (a *Agent) updateMetric(i *int, timestamp uint32, value float64) {
-	metric := a.payload.Metrics[*i]
-	p := metric.Points[0]
-	p.Timestamp = timestamp
-	p.Value = value
-	*i = *i + 1
-}
-
-func (a *Agent) sendStats(ctx context.Context, t time.Time) error {
-	conn, err := grpc.Dial(a.config.CarbonClickHouseAddress, grpc.WithInsecure())
-	if err != nil {
-		return ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to dial to carbon-clickhouse server; %v", err)
-		}).Stack("")
-	}
-	defer conn.Close()
-
-	client := pb.NewCarbonClient(conn)
-	a.updateMetrics(t)
-	_, err = client.Store(ctx, &a.payload)
-	if err != nil {
-		return ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to send metrics to carbon-clickhouse server; %v", err)
-		}).Stack("")
-	}
-	return nil
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load1)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load5)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load15)
+	a.sysMetricsUpdater.UpdateNextMetric(ts, a.uptime.Uptime)
 }
