@@ -11,14 +11,15 @@ import (
 
 // Config is a configuration for Agent.
 type Config struct {
-	CarbonClickHouseAddress string            `yaml:"carbon_click_house_address"`
-	DiskDeviceNames         []string          `yaml:"disk_device_names"`
-	NetworkDeviceNames      []string          `yaml:"network_device_names"`
-	FileSystems             filesystemConfigs `yaml:"file_systems"`
-	ServerID                string            `yaml:"server_id"`
-	Interval                time.Duration     `yaml:"interval"`
-	LogFilename             string            `yaml:"log_filename"`
-	EnableDebugLog          bool              `yaml:"enable_debug_log"`
+	CarbonClickHouseAddressForSysMetrics   string            `yaml:"carbon_click_house_address_for_sys_metrics"`
+	CarbonClickHouseAddressForAgentMetrics string            `yaml:"carbon_click_house_address_for_agents_metrics"`
+	DiskDeviceNames                        []string          `yaml:"disk_device_names"`
+	NetworkDeviceNames                     []string          `yaml:"network_device_names"`
+	FileSystems                            filesystemConfigs `yaml:"file_systems"`
+	ServerID                               string            `yaml:"server_id"`
+	Interval                               time.Duration     `yaml:"interval"`
+	LogFilename                            string            `yaml:"log_filename"`
+	EnableDebugLog                         bool              `yaml:"enable_debug_log"`
 }
 
 type filesystemConfigs []filesystemConfig
@@ -159,7 +160,7 @@ func (a *Agent) readAndSendStats(ctx context.Context, t time.Time) error {
 	a.metricsCollectTime = time.Since(start)
 
 	start = time.Now()
-	err = a.sysMetrics.Send(ctx, a.config.CarbonClickHouseAddress)
+	err = a.sysMetrics.Send(ctx, a.config.CarbonClickHouseAddressForSysMetrics)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to send sys stats; %v", err)
@@ -168,7 +169,7 @@ func (a *Agent) readAndSendStats(ctx context.Context, t time.Time) error {
 	a.metricsSendTime = time.Since(start)
 
 	a.updateAgentMetrics(t)
-	err = a.agentMetrics.Send(ctx, a.config.CarbonClickHouseAddress)
+	err = a.agentMetrics.Send(ctx, a.config.CarbonClickHouseAddressForAgentMetrics)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to send agent stats; %v", err)
