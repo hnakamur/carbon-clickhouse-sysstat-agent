@@ -27,6 +27,11 @@
 //   sysstat.${serverID}.network.${devName}.trans_errs
 //   sysstat.${serverID}.network.${devName}.trans_drops
 //   sysstat.${serverID}.network.${devName}.trans_colls
+//   sysstat.${serverID}.fs.${fsName}.total_bytes
+//   sysstat.${serverID}.fs.${fsName}.free_bytes
+//   sysstat.${serverID}.fs.${fsName}.avail_bytes
+//   sysstat.${serverID}.fs.${fsName}.total_inodes
+//   sysstat.${serverID}.fs.${fsName}.free_inodes
 //   sysstat.${serverID}.loadavg.load1
 //   sysstat.${serverID}.loadavg.load5
 //   sysstat.${serverID}.loadavg.load15

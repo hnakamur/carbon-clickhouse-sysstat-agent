@@ -4,6 +4,8 @@ disk_device_names:
   - sda
   - sdb
   - sdc
+file_systems:
+  - { name: root, path: / }
 network_device_names:
   - br0
   - enp0s25

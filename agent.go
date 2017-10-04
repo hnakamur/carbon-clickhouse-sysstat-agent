@@ -11,13 +11,30 @@ import (
 
 // Config is a configuration for Agent.
 type Config struct {
-	CarbonClickHouseAddress string        `yaml:"carbon_click_house_address"`
-	DiskDeviceNames         []string      `yaml:"disk_device_names"`
-	NetworkDeviceNames      []string      `yaml:"network_device_names"`
-	ServerID                string        `yaml:"server_id"`
-	Interval                time.Duration `yaml:"interval"`
-	LogFilename             string        `yaml:"log_filename"`
-	EnableDebugLog          bool          `yaml:"enable_debug_log"`
+	CarbonClickHouseAddress string            `yaml:"carbon_click_house_address"`
+	DiskDeviceNames         []string          `yaml:"disk_device_names"`
+	NetworkDeviceNames      []string          `yaml:"network_device_names"`
+	FileSystems             filesystemConfigs `yaml:"file_systems"`
+	ServerID                string            `yaml:"server_id"`
+	Interval                time.Duration     `yaml:"interval"`
+	LogFilename             string            `yaml:"log_filename"`
+	EnableDebugLog          bool              `yaml:"enable_debug_log"`
+}
+
+type filesystemConfigs []filesystemConfig
+
+type filesystemConfig struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
+}
+
+func (c filesystemConfigs) Paths() []string {
+	cfgs := []filesystemConfig(c)
+	paths := make([]string, len(cfgs))
+	for i, cfg := range cfgs {
+		paths[i] = cfg.Path
+	}
+	return paths
 }
 
 // Agent is an agent which sends system statistics to carbon-clickhouse.
@@ -27,6 +44,7 @@ type Agent struct {
 	cpuStatReader  *sysstat.CPUStatReader
 	memStatReader  *sysstat.MemoryStatReader
 	diskStatReader *sysstat.DiskStatReader
+	fsStatReader   *sysstat.FileSystemStatReader
 	netStatReader  *sysstat.NetworkStatReader
 	loadAvgReader  *sysstat.LoadAvgReader
 	uptimeReader   *sysstat.UptimeReader
@@ -35,6 +53,7 @@ type Agent struct {
 	memStat   sysstat.MemoryStat
 	diskStats []sysstat.DiskStat
 	netStats  []sysstat.NetworkStat
+	fsStats   []sysstat.FileSystemStat
 	loadAvg   sysstat.LoadAvg
 	uptime    sysstat.Uptime
 
@@ -62,6 +81,8 @@ func New(config *Config) (*Agent, error) {
 			return fmt.Errorf("failed to read disk stats; %v", err)
 		}).Stack("")
 	}
+	fsPaths := config.FileSystems.Paths()
+	fsStatReader := sysstat.NewFileSystemStatReader(fsPaths)
 	netStatReader, err := sysstat.NewNetworkStatReader(config.NetworkDeviceNames)
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
@@ -79,6 +100,7 @@ func New(config *Config) (*Agent, error) {
 	for i, devName := range config.NetworkDeviceNames {
 		netStats[i].DevName = devName
 	}
+	fsStats := make([]sysstat.FileSystemStat, len(fsPaths))
 
 	a := &Agent{
 		config:         config,
@@ -86,12 +108,23 @@ func New(config *Config) (*Agent, error) {
 		memStatReader:  memStatReader,
 		diskStatReader: diskStatReader,
 		netStatReader:  netStatReader,
+		fsStatReader:   fsStatReader,
 		loadAvgReader:  loadAvgReader,
 		uptimeReader:   uptimeReader,
 		diskStats:      diskStats,
 		netStats:       netStats,
+		fsStats:        fsStats,
 	}
 	a.initSysMetrics()
+	if ltsvlog.Logger.DebugEnabled() {
+		expectedSysMetricCount := 16 + 4*len(config.DiskDeviceNames) + 9*len(config.NetworkDeviceNames) + 5*len(fsPaths)
+		ltsvlog.Logger.Debug().String("msg", "after initSysMetrics").Int("sysMetricCount", len(a.sysMetrics.metrics)).
+			Int("expectedSysMetricCount", expectedSysMetricCount).
+			Int("diskCount", len(config.DiskDeviceNames)).
+			Int("networkDeviceCount", len(config.NetworkDeviceNames)).
+			Int("fsCount", len(fsPaths)).
+			Log()
+	}
 	a.initAgentMetrics()
 	return a, nil
 }
@@ -122,9 +155,8 @@ func (a *Agent) readAndSendStats(ctx context.Context, t time.Time) error {
 			return fmt.Errorf("failed to read sys stats; %v", err)
 		})
 	}
-	a.metricsCollectTime = time.Since(start)
-
 	a.updateSysMetrics(t)
+	a.metricsCollectTime = time.Since(start)
 
 	start = time.Now()
 	err = a.sysMetrics.Send(ctx, a.config.CarbonClickHouseAddress)
@@ -169,6 +201,12 @@ func (a *Agent) readStats() error {
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to read network stats; %v", err)
+		}).Stack("")
+	}
+	err = a.fsStatReader.Read(a.fsStats)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to read filesystem stats; %v", err)
 		}).Stack("")
 	}
 	err = a.loadAvgReader.Read(&a.loadAvg)
@@ -217,6 +255,14 @@ func (a *Agent) initSysMetrics() {
 		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_drops", a.config.ServerID, devName))
 		names = append(names, fmt.Sprintf("sysstat.%s.network.%s.trans_colls", a.config.ServerID, devName))
 	}
+	for _, fs := range a.config.FileSystems {
+		fsName := fs.Name
+		names = append(names, fmt.Sprintf("sysstat.%s.fs.%s.total_bytes", a.config.ServerID, fsName))
+		names = append(names, fmt.Sprintf("sysstat.%s.fs.%s.free_bytes", a.config.ServerID, fsName))
+		names = append(names, fmt.Sprintf("sysstat.%s.fs.%s.avail_bytes", a.config.ServerID, fsName))
+		names = append(names, fmt.Sprintf("sysstat.%s.fs.%s.total_inodes", a.config.ServerID, fsName))
+		names = append(names, fmt.Sprintf("sysstat.%s.fs.%s.free_inodes", a.config.ServerID, fsName))
+	}
 	names = append(names, fmt.Sprintf("sysstat.%s.loadavg.load1", a.config.ServerID))
 	names = append(names, fmt.Sprintf("sysstat.%s.loadavg.load5", a.config.ServerID))
 	names = append(names, fmt.Sprintf("sysstat.%s.loadavg.load15", a.config.ServerID))
@@ -256,6 +302,14 @@ func (a *Agent) updateSysMetrics(t time.Time) {
 		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransErrsPerSec)
 		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransDropsPerSec)
 		a.sysMetricsUpdater.UpdateNextMetric(ts, a.netStats[j].TransCollsPerSec)
+	}
+	for j := range a.fsStats {
+		s := a.fsStats[j]
+		a.sysMetricsUpdater.UpdateNextMetric(ts, float64(s.TotalBlocks*s.BlockSize))
+		a.sysMetricsUpdater.UpdateNextMetric(ts, float64(s.FreeBlocks*s.BlockSize))
+		a.sysMetricsUpdater.UpdateNextMetric(ts, float64(s.AvailableBlocks*s.BlockSize))
+		a.sysMetricsUpdater.UpdateNextMetric(ts, float64(s.TotalINodes))
+		a.sysMetricsUpdater.UpdateNextMetric(ts, float64(s.FreeINodes))
 	}
 	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load1)
 	a.sysMetricsUpdater.UpdateNextMetric(ts, a.loadAvg.Load5)
