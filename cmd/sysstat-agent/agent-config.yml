@@ -1,6 +1,6 @@
 ---
 carbon_click_house_address_for_sys_metrics: 10.155.92.218:2005
-carbon_click_house_address_for_agent_metrics: 10.155.92.218:2005
+carbon_click_house_address_for_agents_metrics: 10.155.92.218:2005
 disk_device_names:
   - sda
   - sdb
